@@ -1,0 +1,27 @@
+*.f3z
+
+# Fusion script scratch
+__pycache__/
+*.pyc
+
+/tools/fusion/experimental/
+/tools/fusion/migration/
+/tools/fusion/qa/
+/tools/fusion/assets/button-caps/
+/tools/fusion/assets/experimental/
+/tools/fusion/options/Rear_Electronics_Mounts_Build.py
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+*~
+.serena
+.claude
+.mcp.json
+
+# Local reference and scratch exports
+/temp/
+/.tmp-fusion-inspect/
+/.tmp-fusion-export-*/
+
