@@ -10,6 +10,7 @@ __pycache__/
 /tools/fusion/assets/button-caps/
 /tools/fusion/assets/experimental/
 /tools/fusion/options/Rear_Electronics_Mounts_Build.py
+/docs/generated/
 
 # OS / editor
 Thumbs.db

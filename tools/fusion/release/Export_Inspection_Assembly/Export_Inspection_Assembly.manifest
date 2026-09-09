@@ -1,0 +1,11 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "script",
+  "author": "ARCI project",
+  "description": {
+    "": "Export the project-authored ARCI inspection assembly as a non-printable STEP file."
+  },
+  "version": "1.0.0",
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

@@ -1,0 +1,11 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "script",
+  "author": "ARCI project",
+  "description": {
+    "": "Read-only 42-sketch Fusion gate with advisory linked inventory; writes Markdown and JSON."
+  },
+  "version": "1.0.0",
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
