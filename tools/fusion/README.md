@@ -23,25 +23,43 @@ script:
 The scripts expect this component structure. Do not add a body named
 `FRONT_SHELL` before you run the first script.
 
+## Install a script bundle
+
+Every public script is a Fusion bundle: its folder contains a same-named
+`.py` file and `.manifest`. In **Utilities → Add-Ins → Scripts and Add-Ins**,
+open **Scripts**, click **+**, and select the script folder (not the `.py`
+file). Install each required bundle once; it remains available in Fusion's
+Scripts list thereafter.
+
 ## Supported rebuild sequence
 
 Run the scripts in `rebuild/` in this order:
 
-1. `Front_Parametric_Rebuild.py`
-2. `Front_Internal_Supports_Add.py`
-3. `Front_Panel_Caps_LED_And_Materials.py`
-4. `Back_Parametric_Rebuild.py`
-5. `Multi_Knob_Build.py`
-6. `Dual_Encoder_Knobs_Build.py`
-7. `Tilt_Stand_Build.py`
-8. `Stand_Hardware_Build.py`
+1. `Front_Parametric_Rebuild/`
+2. `Front_Internal_Supports_Add/`
+3. `Front_Panel_Caps_LED_And_Materials/`
+4. `Back_Parametric_Rebuild/`
+5. `Multi_Knob_Build/`
+6. `Dual_Encoder_Knobs_Build/`
+7. `Tilt_Stand_Build/`
+8. `Stand_Hardware_Build/`
 
 Run a complete rebuild in a new working document. Some scripts stop when they
 find existing geometry. Other scripts replace their earlier script-owned
 components.
 
-`options/Build_Right_Matrix_Hub_Cradle.py` creates the optional USB-hub cradle.
+`options/Build_Right_Matrix_Hub_Cradle/` creates the optional USB-hub cradle.
 It is not required for the base enclosure.
+
+## VFO dimple sizing repair
+
+The VFO main knob belongs to the private master, rather than the supported
+clean-rebuild set.  If its circular finger dimple loses its curved floor after
+editing `vfoDimpleD`, add and run the `rebuild/VFO_Dimple_Parameterize` script
+folder once with the master open.  Thereafter, edit only `vfoDimpleD` for ordinary sizing; the
+script derives the dimple depth and floor-round radius so the cup keeps its
+original 2 mm flat floor and tangent curved sides.  Use a diameter greater
+than `vfoDimpleFloorD`.
 
 ## Audit and export
 

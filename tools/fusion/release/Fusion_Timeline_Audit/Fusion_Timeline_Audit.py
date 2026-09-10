@@ -142,8 +142,23 @@ def feature_health(component):
 
 
 def timeline_groups(design):
-    groups = [(group.index, group.name, group.count, group.isCollapsed)
-              for group in design.timeline.timelineGroups]
+    """Return valid groups, ignoring Fusion's stale deleted-group wrappers.
+
+    Some Fusion builds leave an invalid ``TimelineGroup`` proxy in the
+    collection after grouped timeline items are deleted or regenerated. Asking
+    that proxy for ``index`` throws ``InternalValidationError: res >= 0`` even
+    though every live group remains readable. The proxy has no timeline object
+    to audit, so skipping it is equivalent to ignoring an already-deleted
+    group; the valid groups still enforce the collapsed-group release policy.
+    """
+    groups = []
+    collection = design.timeline.timelineGroups
+    for position in range(collection.count):
+        group = collection.item(position)
+        try:
+            groups.append((group.index, group.name, group.count, group.isCollapsed))
+        except RuntimeError:
+            continue
     return sorted(groups, key=lambda item: (item[0] < 0, item[0], item[1]))
 
 

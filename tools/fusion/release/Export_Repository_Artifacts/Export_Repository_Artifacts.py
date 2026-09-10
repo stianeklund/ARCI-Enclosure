@@ -17,6 +17,7 @@ import re
 import runpy
 import shutil
 import tempfile
+import traceback
 import zipfile
 
 import adsk.core
@@ -40,6 +41,8 @@ THREEMF_DIRECTORY = REPOSITORY_ROOT / 'export' / '3mf'
 STEP_DIRECTORY = REPOSITORY_ROOT / 'cad' / 'step'
 AUDIT_SCRIPT = (REPOSITORY_ROOT / 'tools' / 'fusion' / 'release' /
                 'Fusion_Timeline_Audit' / 'Fusion_Timeline_Audit.py')
+EXECUTION_LOG_PATH = (REPOSITORY_ROOT / 'docs' / 'generated' /
+                      'export_repository_artifacts.log')
 
 BODY_PARENT_COMPONENT = {
     'SUPPORT_ARM': 'TILT_STAND_SUPPORT_POS_X',
@@ -152,10 +155,24 @@ MULTIPART_3MF_REQUIREMENTS = {
     'BACK_HALF.3mf': ('BACK_SHELL', 'INLAY_BACK_'),
 }
 
+# The cap master is an assembly wrapper in the released Fusion master. Its
+# single printable cap body is intentionally nested; every other component
+# artifact must remain direct-body-only to exclude installed inspection parts.
+NESTED_BODY_EXPORT_COMPONENTS = frozenset((
+    'DEV_BUTTON_CAP_MASTER_NATIVE',
+))
+
 
 def collection_items(collection):
     """Use Fusion's documented collection API instead of Python iteration."""
     return [collection.item(index) for index in range(collection.count)]
+
+
+def log_execution(message):
+    """Record local Fusion execution evidence without publishing it."""
+    EXECUTION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with EXECUTION_LOG_PATH.open('a', encoding='utf-8') as stream:
+        stream.write(message.rstrip() + '\n')
 
 
 def validate_manifest():
@@ -220,6 +237,9 @@ def native_component_definitions(design, required_names):
 
 def component_definitions(design):
     required_components, _ = required_names()
+    # Body-level artifacts are resolved through their owning component even
+    # when that component does not itself have a component-level artifact.
+    required_components.update(BODY_PARENT_COMPONENT.values())
     return native_component_definitions(design, required_components)
 
 
@@ -301,8 +321,26 @@ def required_names():
     return components, bodies
 
 
-def validate_shell_and_inlay_appearances(definitions):
-    """Require the black-shell / white-inlay material contract before export."""
+def canonical_print_appearances(design):
+    """Return the design's black and white printable appearances."""
+    appearances = collection_items(design.appearances)
+    black = next((appearance for appearance in appearances
+                  if 'black' in (appearance.name or '').lower()), None)
+    white = next((appearance for appearance in appearances
+                  if 'white' in (appearance.name or '').lower()), None)
+    if black is None or white is None:
+        missing = []
+        if black is None:
+            missing.append('black')
+        if white is None:
+            missing.append('white')
+        raise RuntimeError('Design is missing required printable appearance(s): %s.' %
+                           ', '.join(missing))
+    return black, white
+
+
+def validate_shell_and_inlay_bodies(definitions):
+    """Require the direct shell and label bodies that define each multipart part."""
     contracts = (
         ('FRONT_HALF', 'FRONT_SHELL', 'INLAY_FRONT_'),
         ('BACK_HALF', 'BACK_SHELL', 'INLAY_BACK_'),
@@ -316,16 +354,6 @@ def validate_shell_and_inlay_appearances(definitions):
         if shell is None or not inlays:
             raise RuntimeError('%s must directly own %s and %s* bodies.' %
                                (component_name, shell_name, inlay_prefix))
-        shell_appearance = shell.appearance
-        if not shell_appearance or 'black' not in shell_appearance.name.lower():
-            raise RuntimeError('%s must use a black body appearance before export.' %
-                               shell_name)
-        non_white = [body.name for body in inlays
-                     if (not body.appearance or
-                         'white' not in body.appearance.name.lower())]
-        if non_white:
-            raise RuntimeError('%s bodies must use a white appearance: %s' %
-                               (inlay_prefix, ', '.join(sorted(non_white))))
 
 
 def release_checks(design, definitions):
@@ -347,7 +375,8 @@ def release_checks(design, definitions):
     # evidence only and those definitions are never export targets.
     if design.timeline.markerPosition != design.timeline.count:
         raise RuntimeError('Move the timeline marker to the end before export.')
-    validate_shell_and_inlay_appearances(definitions)
+    validate_shell_and_inlay_bodies(definitions)
+    canonical_print_appearances(design)
     validate_stand_side_equivalence_signature(design)
     return bodies
 
@@ -363,6 +392,51 @@ def export_step(manager, component, destination):
     options = manager.createSTEPExportOptions(str(destination), component)
     if not manager.execute(options):
         raise RuntimeError('Fusion failed to export STEP: %s' % destination.name)
+
+
+def export_body_appearance(design, source_body):
+    """Use canonical print colours for shells/inlays; retain all other colours."""
+    black, white = canonical_print_appearances(design)
+    if source_body.name in ('FRONT_SHELL', 'BACK_SHELL'):
+        return black
+    if source_body.name.startswith(('INLAY_FRONT_', 'INLAY_BACK_')):
+        return white
+    return source_body.appearance
+
+
+def occurrence_subtree_bodies(occurrence):
+    """Return native bodies beneath one explicitly selected assembly occurrence."""
+    bodies = []
+    pending = [occurrence]
+    while pending:
+        current = pending.pop()
+        bodies.extend(collection_items(current.bRepBodies))
+        pending.extend(collection_items(current.childOccurrences))
+    return bodies
+
+
+@contextmanager
+def bodies_export_component(design, source_bodies):
+    """Yield a temporary direct-body component for 3MF or STEP export."""
+    root = design.rootComponent
+    occurrence = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
+    export_component = occurrence.component
+    export_component.name = '__ARCI_DIRECT_BODY_EXPORT__'
+    try:
+        for source_body in source_bodies:
+            existing_count = export_component.bRepBodies.count
+            copied_feature = export_component.features.copyPasteBodies.add(source_body)
+            if copied_feature is None or export_component.bRepBodies.count != existing_count + 1:
+                raise RuntimeError('Could not copy %s for export.' % source_body.name)
+            copied_body = export_component.bRepBodies.item(existing_count)
+            copied_body.name = source_body.name
+            appearance = export_body_appearance(design, source_body)
+            if appearance:
+                copied_body.appearance = appearance
+        yield export_component
+    finally:
+        if occurrence and occurrence.isValid:
+            occurrence.deleteMe()
 
 
 @contextmanager
@@ -382,33 +456,25 @@ def direct_body_export_component(design, source_component):
     master document.
     """
     source_bodies = collection_items(source_component.bRepBodies)
+    if not source_bodies and source_component.name in NESTED_BODY_EXPORT_COMPONENTS:
+        # The button-cap master is intentionally an assembly wrapper.  Its
+        # native child owns the printable B-Rep, so flatten that controlled
+        # occurrence subtree for this one artifact. ``Component.allOccurrences``
+        # is definition-relative and can be empty for this wrapper; resolve its
+        # real assembly occurrence from the root instead. Do not use
+        # ``allComponents``: that global collection could capture an unrelated
+        # cap.
+        wrappers = [occurrence for occurrence in
+                    collection_items(design.rootComponent.allOccurrences)
+                    if occurrence.component == source_component]
+        for wrapper in wrappers:
+            source_bodies.extend(occurrence_subtree_bodies(wrapper))
     if not source_bodies:
         raise RuntimeError('Release component has no directly owned bodies: %s' %
                            source_component.name)
 
-    root = design.rootComponent
-    occurrence = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
-    export_component = occurrence.component
-    export_component.name = '__ARCI_DIRECT_BODY_EXPORT__'
-    try:
-        for source_body in source_bodies:
-            # ``copyToComponent(occurrence)`` copies into the occurrence's
-            # *parent*, which would pollute the root and leave this component
-            # empty. A Copy/Paste feature is explicitly owned by the temporary
-            # component and works in a parametric design.
-            existing_count = export_component.bRepBodies.count
-            copied_feature = export_component.features.copyPasteBodies.add(source_body)
-            if copied_feature is None or export_component.bRepBodies.count != existing_count + 1:
-                raise RuntimeError('Could not copy %s from %s for export.' %
-                                   (source_body.name, source_component.name))
-            copied_body = export_component.bRepBodies.item(existing_count)
-            copied_body.name = source_body.name
-            if source_body.appearance:
-                copied_body.appearance = source_body.appearance
+    with bodies_export_component(design, source_bodies) as export_component:
         yield export_component
-    finally:
-        if occurrence and occurrence.isValid:
-            occurrence.deleteMe()
 
 
 def validate_staged_exports(staged):
@@ -499,8 +565,9 @@ def promote_staged_exports(staged, backup_directory):
         raise
 
 
-def run(_context):
+def _run(_context):
     app = adsk.core.Application.get()
+    log_execution('START %s' % REPOSITORY_ROOT)
     design = adsk.fusion.Design.cast(app.activeProduct)
     if design is None:
         raise RuntimeError('Open the parametric Fusion release design first.')
@@ -526,7 +593,8 @@ def run(_context):
                 with direct_body_export_component(design, definitions[name]) as export_component:
                     export_3mf(manager, export_component, source)
             else:
-                export_3mf(manager, bodies[name], source)
+                with bodies_export_component(design, [bodies[name]]) as export_component:
+                    export_3mf(manager, export_component, source)
             staged.append((source, destination, relative))
             written.append(relative)
         for kind, name, filename in STEP_ARTIFACTS:
@@ -538,7 +606,8 @@ def run(_context):
                 with direct_body_export_component(design, definitions[name]) as export_component:
                     export_step(manager, export_component, source)
             else:
-                export_step(manager, bodies[name], source)
+                with bodies_export_component(design, [bodies[name]]) as export_component:
+                    export_step(manager, export_component, source)
             staged.append((source, destination, relative))
             written.append(relative)
 
@@ -548,8 +617,18 @@ def run(_context):
 
     message = 'Exported %d release artifacts:\n%s' % (
         len(written), '\n'.join(written))
+    log_execution('SUCCESS %d artifacts\n%s' % (len(written), '\n'.join(written)))
     print(message)
     app.userInterface.messageBox(message, 'ARCI release export complete')
+
+
+def run(_context):
+    """Fusion entry point with a local diagnostic trail for silent failures."""
+    try:
+        _run(_context)
+    except Exception:
+        log_execution('FAILURE\n%s' % traceback.format_exc())
+        raise
 
 
 def stop(_context):

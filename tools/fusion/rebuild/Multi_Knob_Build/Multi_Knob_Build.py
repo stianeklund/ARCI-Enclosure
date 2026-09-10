@@ -68,7 +68,7 @@ PARAMS = [
     ('multiKnurlInset', '1.0 mm', 'mm', 'Axial inset of the knurl band from the knob rear'),
     ('multiShaftBoreD', '6.15 mm', 'mm', 'D-shaft bore diameter (6 mm reference shaft)'),
     ('multiShaftFlatOffset', '1.55 mm', 'mm', 'D-shaft flat offset from axis'),
-    ('multiShaftBoreDepth', '8.5 mm', 'mm', 'Shaft bore depth (shaft tip is 15.24 mm above knob rear)'),
+    ('multiShaftBoreDepth', '13.3 mm', 'mm', 'Blind shaft-bore depth for the 15 mm PEC11R shaft; leaves a 0.3 mm face wall'),
     ('multiBushingBoreD', '12 mm', 'mm', 'Rear counterbore to clear bushing nut'),
     ('multiBushingBoreDepth', '3 mm', 'mm', 'Rear counterbore depth'),
     ('multiGrubPilotD', '2.5 mm', 'mm', 'Radial grub screw pilot diameter'),
