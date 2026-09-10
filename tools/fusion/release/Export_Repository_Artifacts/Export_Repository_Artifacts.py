@@ -43,6 +43,8 @@ AUDIT_SCRIPT = (REPOSITORY_ROOT / 'tools' / 'fusion' / 'release' /
                 'Fusion_Timeline_Audit' / 'Fusion_Timeline_Audit.py')
 EXECUTION_LOG_PATH = (REPOSITORY_ROOT / 'docs' / 'generated' /
                       'export_repository_artifacts.log')
+FAILED_EXPORT_DIRECTORY = (REPOSITORY_ROOT / 'docs' / 'generated' /
+                           'failed-export-artifacts')
 
 BODY_PARENT_COMPONENT = {
     'SUPPORT_ARM': 'TILT_STAND_SUPPORT_POS_X',
@@ -324,10 +326,24 @@ def required_names():
 def canonical_print_appearances(design):
     """Return the design's black and white printable appearances."""
     appearances = collection_items(design.appearances)
-    black = next((appearance for appearance in appearances
-                  if 'black' in (appearance.name or '').lower()), None)
-    white = next((appearance for appearance in appearances
-                  if 'white' in (appearance.name or '').lower()), None)
+
+    def find_colour(colour):
+        # Prefer the appearances used by the printable enclosure. A broad
+        # substring match can select entries such as "White Ash" whose actual
+        # display colour is grey, even though their name contains "white".
+        preferred_names = ('ABS (%s)' % colour.title(),
+                           'PLA (%s)' % colour.title())
+        for preferred_name in preferred_names:
+            match = next((appearance for appearance in appearances
+                          if (appearance.name or '').lower() ==
+                          preferred_name.lower()), None)
+            if match is not None:
+                return match
+        return next((appearance for appearance in appearances
+                     if colour in (appearance.name or '').lower()), None)
+
+    black = find_colour('black')
+    white = find_colour('white')
     if black is None or white is None:
         missing = []
         if black is None:
@@ -398,9 +414,9 @@ def export_body_appearance(design, source_body):
     """Use canonical print colours for shells/inlays; retain all other colours."""
     black, white = canonical_print_appearances(design)
     if source_body.name in ('FRONT_SHELL', 'BACK_SHELL'):
-        return black
+        return source_body.appearance or black
     if source_body.name.startswith(('INLAY_FRONT_', 'INLAY_BACK_')):
-        return white
+        return source_body.appearance or white
     return source_body.appearance
 
 
@@ -510,16 +526,28 @@ def validate_staged_exports(staged):
                     if missing_names:
                         problems.append('%s (missing multipart bodies: %s)' %
                                         (relative, ', '.join(missing_names)))
+                    # The 3MF core specification permits both #RRGGBB and
+                    # #RRGGBBAA display colours. Fusion has emitted both forms
+                    # across releases, so accepting only the alpha-bearing
+                    # form incorrectly rejects otherwise valid exports.
                     colours = [match.decode('ascii') for match in re.findall(
-                        rb'#[0-9A-Fa-f]{8}', model_xml)]
+                        rb'#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?(?![0-9A-Fa-f])',
+                        model_xml)]
                     rgb = [tuple(int(colour[index:index + 2], 16)
                                  for index in (1, 3, 5))
                            for colour in colours]
                     has_black = any(max(colour) <= 50 for colour in rgb)
                     has_white = any(min(colour) >= 220 for colour in rgb)
                     if not has_black or not has_white:
-                        problems.append('%s (missing black-shell or white-inlay colour)' %
-                                        relative)
+                        found = ', '.join(sorted(set(colours))) or '<none>'
+                        problems.append(
+                            '%s (missing %s colour; found: %s)' %
+                            (relative,
+                             ' and '.join(part for present, part in
+                                          ((has_black, 'black-shell'),
+                                           (has_white, 'white-inlay'))
+                                          if not present),
+                             found))
             except zipfile.BadZipFile:
                 problems.append('%s (invalid 3MF ZIP container)' % relative)
         elif source.suffix.lower() == '.step':
@@ -563,6 +591,17 @@ def promote_staged_exports(staged, backup_directory):
                 (original_error, '; '.join(rollback_errors))
             ) from original_error
         raise
+
+
+def preserve_failed_exports(staged):
+    """Keep rejected staged artifacts for local diagnosis on the next run."""
+    if FAILED_EXPORT_DIRECTORY.exists():
+        shutil.rmtree(FAILED_EXPORT_DIRECTORY)
+    for source, _, relative in staged:
+        if source.is_file():
+            destination = FAILED_EXPORT_DIRECTORY / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
 
 
 def _run(_context):
@@ -611,7 +650,13 @@ def _run(_context):
             staged.append((source, destination, relative))
             written.append(relative)
 
-        validate_staged_exports(staged)
+        try:
+            validate_staged_exports(staged)
+        except Exception:
+            preserve_failed_exports(staged)
+            log_execution('PRESERVED FAILED EXPORTS %s' %
+                          FAILED_EXPORT_DIRECTORY)
+            raise
 
         promote_staged_exports(staged, backup_root)
 
